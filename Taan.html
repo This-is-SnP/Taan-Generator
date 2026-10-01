@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Taans Generator</title>
+
+<style>
+body {
+    background: #000000;
+    color: #e6e6e6;
+    font-family: sans-serif;
+    margin: 0;
+    display: flex;
+    justify-content: center;
+}
+
+.container {
+    width: 90%;
+    max-width: 700px;
+    margin-top: 40px;
+}
+
+input, select, button {
+    padding: 10px;
+    margin: 5px 0;
+    border-radius: 6px;
+    border: 1px solid #333333;
+    background: #111111;
+    color: white;
+}
+
+button {
+    background: #222222;
+    border: 1px solid #444444;
+    color: #ffffff;
+    cursor: pointer;
+    transition: background 0.2s, border-color 0.2s;
+}
+
+button:hover {
+    background: #333333;
+    border-color: #666666;
+}
+
+.secondary {
+    background: transparent;
+    border: 1px solid #333333;
+}
+
+.invalid {
+    border-color: #ff4d4d !important;
+}
+
+#results div {
+    padding: 8px;
+    margin: 4px 0;
+    border-radius: 4px;
+    border: 1px solid #222222;
+}
+
+#results div.active {
+    background: #222222;
+    border-color: #555555;
+}
+
+/* guide */
+#guideContent { 
+    display: none; 
+    font-size: 13px; 
+    color: #cbd5e1; 
+    border: 1px solid #222222;
+    padding: 10px;
+    border-radius: 6px;
+    margin-top: 5px;
+}
+
+/* modal */
+#modalOverlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.8);
+    display: none;
+    justify-content: center;
+    align-items: center;
+}
+
+#modalBox {
+    background: #111111;
+    padding: 20px;
+    border-radius: 10px;
+    border: 1px solid #333333;
+    width: 300px;
+}
+</style>
+</head>
+
+<body>
+<div class="container">
+
+<h1>Taans Generator</h1>
+
+<div onclick="toggleGuide()" style="cursor:pointer; display:inline-block; margin-bottom:10px;">Usage Guide ▼</div>
+<div id="guideContent">
+<p><b>Swars:</b> Sa Re Ga Ma Pa Dha Ni</p>
+<p><b>Modifiers:</b></p>
+<ul>
+<li>, → Komal (Re, Ga, Dha, Ni only)</li>
+<li>' → Tivra (Ma only)</li>
+<li>* → Taar</li>
+<li>. → Mandra</li>
+</ul>
+<p><b>Multiple Notes per Box:</b> Separate notes with spaces (e.g., <code>Re, Ma'</code> or <code>Pa Dha Ni*</code>)</p>
+</div>
+
+<br>
+
+<select id="presetDropdown" onchange="handlePresetChange()">
+<option value="">Select Preset</option>
+<option value="__new__">+ New Preset</option>
+</select>
+
+<select id="numDigits" onchange="generateInputFields()">
+<option value="4" selected>4</option>
+<option value="5">5</option>
+<option value="6">6</option>
+</select>
+
+<div id="inputFields"></div>
+
+<button onclick="generatePermutations()">Generate</button>
+<button onclick="copyAllTaans()">Copy All</button>
+
+<div style="margin-top: 15px;">
+<label>BPM:</label>
+<input type="number" id="bpm" value="120" style="width: 60px;">
+
+<label>Scale:</label>
+<select id="scale">
+<option>C</option><option>C#</option><option>D</option>
+<option>D#</option><option>E</option><option>F</option>
+<option>F#</option><option>G</option><option>G#</option>
+<option>A</option><option>A#</option><option>B</option>
+</select>
+
+<button onclick="prevTaan()">⏮</button>
+<button onclick="togglePlay()" id="playBtn">▶</button>
+<button onclick="nextTaan()">⏭</button>
+</div>
+
+<h2>Results</h2>
+<div id="results"></div>
+
+</div>
+
+<!-- modal -->
+<div id="modalOverlay">
+<div id="modalBox">
+<input id="modalInput" style="width: 90%;">
+<br>
+<button onclick="confirmModal()">OK</button>
+<button onclick="closeModal()">Cancel</button>
+</div>
+</div>
+
+<script>
+let allTaans = [];
+let audioCtx = null;
+let isPlaying = false;
+let currentIndex = 0;
+let currentTimeout = null;
+
+const swarMap = { Sa: 0, Re: 2, Ga: 4, Ma: 5, Pa: 7, Dha: 9, Ni: 11 };
+const noteFreq = {
+    "C": 261.63, "C#": 277.18, "D": 293.66, "D#": 311.13,
+    "E": 329.63, "F": 349.23, "F#": 369.99, "G": 392.00,
+    "G#": 415.30, "A": 440.00, "A#": 466.16, "B": 493.88
+};
+
+const komalAllowed = ["Re", "Ga", "Dha", "Ni"];
+const tivraAllowed = ["Ma"];
+
+function initAudio() {
+    if (!audioCtx) {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    if (audioCtx.state === 'suspended') {
+        audioCtx.resume();
+    }
+}
+
+function toggleGuide() {
+    const g = document.getElementById('guideContent');
+    g.style.display = g.style.display === "block" ? "none" : "block";
+}
+
+function generateInputFields() {
+    const n = document.getElementById('numDigits').value;
+    const d = document.getElementById('inputFields');
+    d.innerHTML = "";
+    for (let i = 1; i <= n; i++) {
+        let input = document.createElement('input');
+        input.id = "value" + i;
+        input.placeholder = "Box " + i + " (e.g. Sa Re)";
+        input.style.display = "block";
+        input.style.width = "95%";
+        d.appendChild(input);
+    }
+}
+
+function validateSingleNote(note) {
+    if (!note) return false;
+    let base = note.replace(/[,*'.]/g, '');
+    if (!swarMap.hasOwnProperty(base)) return false;
+
+    let isKomal = note.includes(',');
+    let isTivra = note.includes("'");
+
+    if (isKomal && !komalAllowed.includes(base)) return false;
+    if (isTivra && !tivraAllowed.includes(base)) return false;
+    return true;
+}
+
+function validateBoxInput(val) {
+    let notes = val.trim().split(/\s+/);
+    if (notes.length === 0 || val.trim() === '') return false;
+    return notes.every(n => validateSingleNote(n));
+}
+
+function generatePermutations() {
+    let n = document.getElementById('numDigits').value;
+    let values = [];
+    for (let i = 1; i <= n; i++) {
+        let v = document.getElementById('value' + i);
+        if (!validateBoxInput(v.value)) {
+            v.classList.add('invalid');
+            return;
+        } else {
+            v.classList.remove('invalid');
+        }
+        values.push(v.value.trim());
+    }
+
+    allTaans = getPermutations(values);
+    currentIndex = 0;
+    render();
+}
+
+function render() {
+    const r = document.getElementById('results');
+    r.innerHTML = "";
+    allTaans.forEach((t, i) => {
+        let div = document.createElement('div');
+        div.textContent = t.join(' | ');
+        if (i === currentIndex) div.classList.add('active');
+        div.onclick = () => {
+            currentIndex = i;
+            render();
+            if (isPlaying) {
+                clearTimeout(currentTimeout);
+                playTaan();
+            }
+        };
+        r.appendChild(div);
+    });
+}
+
+function getPermutations(arr) {
+    if (arr.length === 1) return [arr];
+    let res = [];
+    for (let i = 0; i < arr.length; i++) {
+        let rest = arr.slice(0, i).concat(arr.slice(i + 1));
+        getPermutations(rest).forEach(p => res.push([arr[i]].concat(p)));
+    }
+    return res;
+}
+
+function getFrequency(s) {
+    let base = s.replace(/[,*'.]/g, '');
+    let semi = swarMap[base];
+    if (semi === undefined) semi = 0;
+
+    if (s.includes(',')) semi--;
+    if (s.includes("'")) semi++;
+
+    let rootFreq = noteFreq[document.getElementById('scale').value] || 261.63;
+    let freq = rootFreq * Math.pow(2, semi / 12);
+
+    if (s.includes('*')) freq *= 2;
+    if (s.includes('.')) freq /= 2;
+
+    return freq;
+}
+
+function playNote(freq, duration) {
+    if (!freq) return;
+    initAudio();
+
+    let osc = audioCtx.createOscillator();
+    let gain = audioCtx.createGain();
+
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+
+    gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration - 0.02);
+
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+
+    osc.start(audioCtx.currentTime);
+    osc.stop(audioCtx.currentTime + duration);
+}
+
+function playTaan() {
+    if (!isPlaying || allTaans.length === 0) return;
+
+    let bpm = parseFloat(document.getElementById('bpm').value) || 120;
+    let dur = 60 / bpm;
+    
+    // Extract individual notes from the active taan boxes
+    let boxGroup = allTaans[currentIndex];
+    let notes = boxGroup.flatMap(box => box.trim().split(/\s+/));
+
+    let noteIdx = 0;
+
+    function step() {
+        if (!isPlaying) return;
+
+        if (noteIdx >= notes.length) {
+            currentIndex = (currentIndex + 1) % allTaans.length;
+            render();
+            playTaan();
+            return;
+        }
+
+        let freq = getFrequency(notes[noteIdx]);
+        playNote(freq, dur);
+
+        noteIdx++;
+        currentTimeout = setTimeout(step, dur * 1000);
+    }
+
+    step();
+}
+
+function togglePlay() {
+    initAudio();
+    isPlaying = !isPlaying;
+    document.getElementById('playBtn').textContent = isPlaying ? "⏸" : "▶";
+
+    if (isPlaying) {
+        if (allTaans.length === 0) generatePermutations();
+        playTaan();
+    } else {
+        clearTimeout(currentTimeout);
+    }
+}
+
+function nextTaan() {
+    if (allTaans.length === 0) return;
+    clearTimeout(currentTimeout);
+    currentIndex = (currentIndex + 1) % allTaans.length;
+    render();
+    if (isPlaying) playTaan();
+}
+
+function prevTaan() {
+    if (allTaans.length === 0) return;
+    clearTimeout(currentTimeout);
+    currentIndex = (currentIndex - 1 + allTaans.length) % allTaans.length;
+    render();
+    if (isPlaying) playTaan();
+}
+
+function copyAllTaans() {
+    if (allTaans.length === 0) return;
+    let text = allTaans.map(t => t.join(' | ')).join('\n');
+    navigator.clipboard.writeText(text);
+}
+
+function handlePresetChange() {
+    // Placeholder handler for preset dropdown
+}
+
+function closeModal() {
+    document.getElementById('modalOverlay').style.display = 'none';
+}
+
+function confirmModal() {
+    closeModal();
+}
+
+generateInputFields();
+</script>
+
+</body>
+</html>
